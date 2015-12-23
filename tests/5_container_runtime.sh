@@ -60,25 +60,31 @@ else
   check_5_3="5.3  - Verify that containers are running only a single main process"
 
   fail=0
+  printcheck=0
   for c in $containers; do
-    exec_check=$(docker exec "$c" ps -el 2>/dev/null)
-    if [ $? -eq 255 ]; then
-      warn "$check_5_3"
-      warn "     * Docker exec fails: $c"
-      fail=1
-    fi
-
-    processes=$(docker exec "$c" ps -el 2>/dev/null | wc -l | awk '{print $1}')
-    if [ "$processes" -gt 5 ]; then
+    processes=$(docker exec "$c" ps -el 2>/dev/null | tail -n +2 | grep -c -v "ps -el")
+    if [ "$processes" -gt 1 ]; then
       # If it's the first container, fail the test
       if [ $fail -eq 0 ]; then
         warn "$check_5_3"
         warn "     * Too many proccesses running: $c"
         fail=1
+	printcheck=1
       else
         warn "     * Too many proccesses running: $c"
       fi
     fi
+
+    exec_check=$(docker exec "$c" ps -el 2>/dev/null)
+    if [ $? -eq 255 ]; then
+        if [ $printcheck -eq 0 ]; then
+          warn "$check_5_3"
+	  printcheck=1
+        fi
+      warn "     * Docker exec fails: $c"
+      fail=1
+    fi
+
   done
   # We went through all the containers and found none with toom any processes
   if [ $fail -eq 0 ]; then
@@ -92,7 +98,7 @@ else
   for c in $containers; do
     caps=$(docker inspect --format 'CapAdd={{ .HostConfig.CapAdd}}' "$c")
 
-    if [ "$caps" != "CapAdd=" -a "$caps" != "CapAdd=[]" -a "$caps" != "CapAdd=<no value>" ]; then
+    if [ "$caps" != 'CapAdd=' -a "$caps" != 'CapAdd=[]' -a "$caps" != 'CapAdd=<no value>' -a "$caps" != 'CapAdd=<nil>' ]; then
       # If it's the first container, fail the test
       if [ $fail -eq 0 ]; then
         warn "$check_5_4"
@@ -145,7 +151,13 @@ else
 /usr'
   fail=0
   for c in $containers; do
-    volumes=$(docker inspect --format '{{ .VolumesRW }}' "$c")
+    docker inspect --format '{{ .VolumesRW }}' "$c" 2>/dev/null 1>&2
+
+    if [ $? -eq 0 ]; then
+      volumes=$(docker inspect --format '{{ .VolumesRW }}' "$c")
+    else
+      volumes=$(docker inspect --format '{{ .Mounts }}' "$c")
+    fi
     # Go over each directory in sensitive dir and see if they exist in the volumes
     for v in $sensitive_dirs; do
       sensitive=0
@@ -171,25 +183,32 @@ else
   check_5_7="5.7  - Do not run ssh within containers"
 
   fail=0
+  printcheck=0
   for c in $containers; do
-    exec_check=$(docker exec "$c" ps -el 2>/dev/null)
-    if [ $? -eq 255 ]; then
-      warn "$check_5_7"
-      warn "     * Docker exec fails: $c"
-      fail=1
-    fi
 
     processes=$(docker exec "$c" ps -el 2>/dev/null | grep -c sshd | awk '{print $1}')
-    if [ $processes -gt 1 ]; then
+    if [ "$processes" -ge 1 ]; then
       # If it's the first container, fail the test
       if [ $fail -eq 0 ]; then
         warn "$check_5_7"
         warn "     * Container running sshd: $c"
         fail=1
+	printcheck=1
       else
         warn "     * Container running sshd: $c"
       fi
     fi
+
+    exec_check=$(docker exec "$c" ps -el 2>/dev/null)
+    if [ $? -eq 255 ]; then
+        if [ $printcheck -eq 0 ]; then
+          warn "$check_5_7"
+	  printcheck=1
+        fi
+      warn "     * Docker exec fails: $c"
+      fail=1
+    fi
+
   done
   # We went through all the containers and found none with sshd
   if [ $fail -eq 0 ]; then
@@ -201,18 +220,22 @@ else
 
   fail=0
   for c in $containers; do
-    port=$(docker port "$c" | awk '{print $1}' | cut -d '/' -f1)
+    # Port format is private port -> ip: public port
+    ports=$(docker port "$c" | awk '{print $0}' | cut -d ':' -f2)
 
-    if [ ! -z "$port" ] && [ "$port" -lt 1025 ]; then
-      # If it's the first container, fail the test
-      if [ $fail -eq 0 ]; then
-        warn "$check_5_8"
-        warn "     * Privileged Port in use: $port in $c"
-        fail=1
-      else
-        warn "     * Privileged Port in use: $port in $c"
+    # iterate through port range (line delimited)
+    for port in $ports; do
+    if [ ! -z "$port" ] && [ "0$port" -lt 1024 ]; then
+        # If it's the first container, fail the test
+        if [ $fail -eq 0 ]; then
+          warn "$check_5_8"
+          warn "     * Privileged Port in use: $port in $c"
+          fail=1
+        else
+          warn "     * Privileged Port in use: $port in $c"
+        fi
       fi
-    fi
+    done
   done
   # We went through all the containers and found no privileged ports
   if [ $fail -eq 0 ]; then
@@ -247,7 +270,13 @@ else
 
   fail=0
   for c in $containers; do
-    memory=$(docker inspect --format '{{ .Config.Memory }}' "$c")
+    docker inspect --format '{{ .Config.Memory }}' "$c" 2> /dev/null 1>&2
+
+    if [ "$?" -eq 0 ]; then
+      memory=$(docker inspect --format '{{ .Config.Memory }}' "$c")
+    else
+      memory=$(docker inspect --format '{{ .HostConfig.Memory }}' "$c")
+    fi
 
     if [ "$memory" = "0" ]; then
       # If it's the first container, fail the test
@@ -270,7 +299,13 @@ else
 
   fail=0
   for c in $containers; do
-    shares=$(docker inspect --format '{{ .Config.CpuShares }}' "$c")
+    docker inspect --format '{{ .Config.CpuShares }}' "$c" 2> /dev/null 1>&2
+
+    if [ "$?" -eq 0 ]; then
+      shares=$(docker inspect --format '{{ .Config.CpuShares }}' "$c")
+    else
+      shares=$(docker inspect --format '{{ .HostConfig.CpuShares }}' "$c")
+    fi
 
     if [ "$shares" = "0" ]; then
       # If it's the first container, fail the test
@@ -316,17 +351,18 @@ else
 
   fail=0
   for c in $containers; do
-    ip=$(docker port "$c" | awk '{print $3}' | cut -d ':' -f1)
-    if [ "$ip" = "0.0.0.0" ]; then
-      # If it's the first container, fail the test
-      if [ $fail -eq 0 ]; then
-        warn "$check_5_14"
-        warn "     * Port being bound to wildcard IP: $ip in $c"
-        fail=1
-      else
-        warn "     * Port being bound to wildcard IP: $ip in $c"
+    for ip in $(docker port "$c" | awk '{print $3}' | cut -d ':' -f1); do
+      if [ "$ip" = "0.0.0.0" ]; then
+        # If it's the first container, fail the test
+        if [ $fail -eq 0 ]; then
+          warn "$check_5_14"
+          warn "     * Port being bound to wildcard IP: $ip in $c"
+          fail=1
+        else
+          warn "     * Port being bound to wildcard IP: $ip in $c"
+        fi
       fi
-    fi
+    done
   done
   # We went through all the containers and found no ports bound to 0.0.0.0
   if [ $fail -eq 0 ]; then

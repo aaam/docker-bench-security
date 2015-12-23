@@ -15,7 +15,13 @@ else
   set -f; IFS=$'
 '
   for c in $containers; do
-    volumes=$(docker inspect --format '{{ .Volumes }}' "$c")
+    docker inspect --format '{{ .Volumes }}' "$c" 2>/dev/null 1>&2
+
+    if [ $? -eq 0 ]; then
+      volumes=$(docker inspect --format '{{ .Volumes }}' "$c")
+    else
+      volumes=$(docker inspect --format '{{ .Config.Volumes }}' "$c")
+    fi
 
     if [ "$volumes" = "map[]" ]; then
       # If it's the first container, fail the test
@@ -36,12 +42,12 @@ set +f; unset IFS
 
 # 6.6
 check_6_6="6.6 - Avoid image sprawl"
-images=$(docker images -q | wc -l | awk '{print $1}')
+images=$(docker images -q | sort -u | wc -l | awk '{print $1}')
 active_images=0
 
 for c in $(docker inspect -f "{{.Image}}" $(docker ps -qa)); do
-  if [[ $(docker images --no-trunc -a | grep $c) ]]; then
-    ((active_images++))
+  if docker images --no-trunc -a | grep "$c" > /dev/null ; then
+    active_images=$(( active_images += 1 ))
   fi
 done
 
@@ -53,7 +59,7 @@ else
   info "     * There are currently: $images images"
 fi
 
-if [[ "$active_images" -lt "$((images / 2))" ]]; then
+if [ "$active_images" -lt "$((images / 2))" ]; then
   warn "     * Only $active_images out of $images are in use"
 fi
 
@@ -61,7 +67,7 @@ fi
 check_6_7="6.7 - Avoid container sprawl"
 total_containers=$(docker info 2>/dev/null | grep "Containers" | awk '{print $2}')
 running_containers=$(docker ps -q | wc -l | awk '{print $1}')
-diff="$(($total_containers - $running_containers))"
+diff="$((total_containers - running_containers))"
 if [ "$diff" -gt 25 ]; then
   warn "$check_6_7"
   warn "     * There are currently a total of $total_containers containers, with only $running_containers of them currently running"

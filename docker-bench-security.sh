@@ -1,10 +1,11 @@
 #!/bin/sh
 # ------------------------------------------------------------------------------
-# CIS Docker 1.6 Benchmark v1.0.0 checker
+# Docker Bench for Security v1.0.0
 #
 # Docker, Inc. (c) 2015
 #
-# Provides automated tests for the CIS Docker 1.6 Benchmark:
+# Checks for dozens of common best-practices around deploying Docker containers in production.
+# Inspired by the CIS Docker 1.6 Benchmark:
 # https://benchmarks.cisecurity.org/tools2/docker/CIS_Docker_1.6_Benchmark_v1.0.0.pdf
 #
 # ------------------------------------------------------------------------------
@@ -18,10 +19,9 @@ this_path=$(abspath "$0")       ## Path of this file including filenamel
 myname=$(basename "${this_path}")     ## file name of this script.
 
 export PATH=/bin:/sbin:/usr/bin:/usr/local/bin:/usr/sbin/
-logger="${myname}.log"
 
 # Check for required program(s)
-req_progs='docker netstat grep awk'
+req_progs='awk docker grep netstat stat'
 for p in $req_progs; do
   command -v "$p" >/dev/null 2>&1 || { printf "%s command not found.\n" "$p"; exit 1; }
 done
@@ -34,23 +34,39 @@ if [ $? -ne 0 ]; then
 fi
 
 usage () {
-  printf "
-  usage: %s [options]
+  cat <<EOF
+  usage: ${myname} [options]
 
-  -h           optional  Print this help message\n" "$myname"
-  exit 1
+  -h           optional  Print this help message
+  -l PATH      optional  Log output in PATH
+EOF
 }
 
+# Get the flags
+# If you add an option here, please
+# remember to update usage() above.
+while getopts hl: args
+do
+  case $args in
+  h) usage; exit 0 ;;
+  l) logger="$OPTARG" ;;
+  *) usage; exit 1 ;;
+  esac
+done
+
+if [ -z "$logger" ]; then
+  logger="${myname}.log"
+fi
+
 yell "# ------------------------------------------------------------------------------
-# CIS Docker 1.6 Benchmark v1.0.0 checker
+# Docker Bench for Security v1.0.0
 #
 # Docker, Inc. (c) 2015
 #
-# Provides automated tests for the CIS Docker 1.6 Benchmark:
+# Checks for dozens of common best-practices around deploying Docker containers in production.
+# Inspired by the CIS Docker 1.6 Benchmark:
 # https://benchmarks.cisecurity.org/tools2/docker/CIS_Docker_1.6_Benchmark_v1.0.0.pdf
 # ------------------------------------------------------------------------------"
-
-logit "Initializing $(date)\n"
 
 # Warn if not root
 ID=$(id -u)
@@ -59,28 +75,20 @@ if [ "x$ID" != "x0" ]; then
     sleep 3
 fi
 
-# Get the flags
-while getopts :hlfi: args
-do
-  case $args in
-  h) usage ;;
-  l) logger="$OPTARG" ;;
-  *) usage ;;
-  esac
-done
+logit "Initializing $(date)\n"
 
 # Load all the tests from tests/ and run them
 main () {
   # List all running containers
-  containers=$(docker ps -q)
-  # If there is a container with label docker-bench, memorize it:
+  containers=$(docker ps | sed '1d' | awk '{print $NF}')
+  # If there is a container with label docker_bench_security, memorize it:
   benchcont="nil"
   for c in $containers; do
     labels=$(docker inspect --format '{{ .Config.Labels }}' "$c")
-    contains "$labels" "docker-bench" && benchcont="$c"
+    contains "$labels" "docker_bench_security" && benchcont="$c"
   done
-  # List all running containers except docker-bench
-  containers=$(docker ps -q | grep -v "$benchcont")
+  # List all running containers except docker-bench (use names to improve readability in logs)
+  containers=$(docker ps | sed '1d' |  awk '{print $NF}' | grep -v "$benchcont")
 
   for test in tests/*.sh
   do
